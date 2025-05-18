@@ -1,3 +1,5 @@
+// src/pages/ResourcesPage.jsx
+
 import React, { useState, useEffect } from 'react';
 import { useFilters } from '../context/FilterContext';
 import FilterBar from '../components/filters/FilterBar';
@@ -5,46 +7,71 @@ import ResourceTable from '../components/resource/ResourceTable';
 import Pagination from '../components/common/Pagination';
 import Loading from '../components/common/Loading';
 import { usePagination } from '../hooks/usePagination';
-import { useResourcesList } from '../hooks/useApi';
-
-// Import this at the top level of your component file
-let resourcesData = [];
-
-// Dynamically import the large JSON data
-const loadData = async () => {
-  try {
-    const module = await import('../../data.json');
-    resourcesData = module.default;
-    return resourcesData;
-  } catch (error) {
-    console.error('Failed to load data.json:', error);
-    return [];
-  }
-};
+import { loadAllData } from '../utils/dataLoader';
+import { filterResources } from '../services/api';
 
 const ResourcesPage = () => {
-  const [data, setData] = useState([]);
-  const [dataLoaded, setDataLoaded] = useState(false);
+  const [allData, setAllData] = useState([]);
+  const [filteredData, setFilteredData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [error, setError] = useState(null);
   const { filters, setPage, setLimit } = useFilters();
-  
-  // Load the data when the component mounts
+
+  // Load all data parts when component mounts
   useEffect(() => {
-    const loadResourcesData = async () => {
-      const loadedData = await loadData();
-      setData(loadedData);
-      setDataLoaded(true);
+    const fetchData = async () => {
+      setDataLoading(true);
+      try {
+        const data = await loadAllData();
+        setAllData(data);
+        setError(null);
+      } catch (err) {
+        setError('Failed to load resource data');
+        console.error(err);
+      } finally {
+        setDataLoading(false);
+      }
     };
-    
-    loadResourcesData();
+
+    fetchData();
   }, []);
-  
-  // Use custom hooks for data fetching and pagination
-  const { 
-    resources, 
-    loading, 
-    error, 
-    totalItems 
-  } = useResourcesList(data, filters, filters.page, filters.limit);
+
+  // Apply filters whenever filters or data changes
+  useEffect(() => {
+    const applyFilters = async () => {
+      if (!allData.length) return;
+      
+      setLoading(true);
+      try {
+        // Filter data client-side
+        const { filteredItems, total } = filterResources(
+          allData, 
+          filters.page, 
+          filters.limit, 
+          {
+            orgType: filters.orgType,
+            orgs: filters.orgs,
+            source: filters.source,
+            sectors: filters.sectors,
+            search: filters.search
+          }
+        );
+        
+        setFilteredData(filteredItems);
+        setTotalItems(total);
+      } catch (err) {
+        setError('Error filtering resources');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    applyFilters();
+  }, [allData, filters]);
+
+  // Pagination state
+  const [totalItems, setTotalItems] = useState(0);
   
   const pagination = usePagination({
     totalItems,
@@ -52,28 +79,29 @@ const ResourcesPage = () => {
     initialItemsPerPage: filters.limit,
     onPageChange: setPage
   });
-  
-  if (!dataLoaded) {
-    return <Loading message="Loading resources data..." />;
+
+  // Show loading state while initially loading data
+  if (dataLoading) {
+    return <Loading message="Loading resource data files..." />;
   }
-  
+
   return (
     <div className="resources-page">
       <h1>Data Resources</h1>
       
-      <FilterBar data={data} />
+      <FilterBar data={allData} />
       
       <div className="results-summary">
-        Showing {resources.length} of {totalItems} resources
+        Showing {filteredData.length} of {totalItems} resources
       </div>
       
       {loading ? (
-        <Loading />
+        <Loading message="Applying filters..." />
       ) : error ? (
         <div className="error-message">{error}</div>
       ) : (
         <>
-          <ResourceTable resources={resources} />
+          <ResourceTable resources={filteredData} />
           
           <Pagination
             currentPage={pagination.currentPage}
